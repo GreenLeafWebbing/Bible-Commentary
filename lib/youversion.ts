@@ -130,23 +130,29 @@ const KNOWN: Record<string, { abbreviation: string; title: string }> = {
   "59": { abbreviation: "ESV", title: "English Standard Version" },
   "111": { abbreviation: "NIV", title: "New International Version" },
   "116": { abbreviation: "NLT", title: "New Living Translation" },
-  "1": { abbreviation: "KJV", title: "King James Version" },
-  "1713": { abbreviation: "CSB", title: "Christian Standard Bible" },
+  "113": { abbreviation: "NIVUK", title: "New International Version (UK)" },
   "2692": { abbreviation: "NASB", title: "New American Standard Bible 2020" },
   "100": { abbreviation: "NASB1995", title: "New American Standard Bible 1995" },
   "1588": { abbreviation: "AMP", title: "Amplified Bible" },
+  "1": { abbreviation: "KJV", title: "King James Version" },
+  "1713": { abbreviation: "CSB", title: "Christian Standard Bible" },
   "3034": { abbreviation: "BSB", title: "Berean Standard Bible" },
-  "206": { abbreviation: "WEBUS", title: "World English Bible" },
-  "107": { abbreviation: "NET", title: "New English Translation" },
+  "2660": { abbreviation: "LSV", title: "Literal Standard Version" },
+  "12": { abbreviation: "ASV", title: "American Standard Version" },
+  "2163": { abbreviation: "GNV", title: "Geneva Bible" },
+  "206": { abbreviation: "WEB", title: "World English Bible" },
+  "110": { abbreviation: "NIrV", title: "New International Reader's Version" },
 };
+/** Translations offered in the picker, in this order (only those the key can read are shown). */
+const CURATED = ["114", "59", "111", "116", "113", "2692", "100", "1713", "1588", "1", "3034", "2660", "12", "2163", "206", "110"];
 const fallbackId = () => process.env.YOUVERSION_FALLBACK_BIBLE_ID || "3034";
 
 async function versionInfo(id: string): Promise<VersionInfo> {
   const info = await getJson(`${API}/bibles/${id}`).catch(() => ({ status: 0, body: null }));
   return {
     id,
-    abbreviation: pick(info.body, "abbreviation", "local_abbreviation") ?? KNOWN[id]?.abbreviation ?? `v${id}`,
-    title: pick(info.body, "title", "local_title", "name") ?? KNOWN[id]?.title,
+    abbreviation: KNOWN[id]?.abbreviation ?? pick(info.body, "abbreviation", "local_abbreviation") ?? `v${id}`,
+    title: KNOWN[id]?.title ?? pick(info.body, "title", "local_title", "name"),
     copyright: pick(info.body, "copyright_short", "copyright", "copyright_long"),
   };
 }
@@ -207,14 +213,11 @@ export async function availableVersions(): Promise<VersionInfo[]> {
   } catch {
     /* fall through to probing known versions */
   }
-  // Make sure the well-known versions are included only if the key can actually read them.
-  const checks = await Promise.all(Object.keys(KNOWN).map(async (id) => [id, await canRead(id)] as const));
-  for (const [id, ok] of checks) {
-    if (ok && !found.has(id)) found.set(id, { id, ...KNOWN[id] });
-    if (!ok && PREFERRED.includes(id)) found.delete(id);
-  }
-  const rank = (id: string) => (PREFERRED.includes(id) ? PREFERRED.indexOf(id) : KNOWN[id] ? 10 : 100);
-  return [...found.values()].sort((a, b) => rank(a.id) - rank(b.id) || a.abbreviation.localeCompare(b.abbreviation));
+  // Listed versions confirm access; anything not listed is probed directly.
+  const checks = await Promise.all(
+    CURATED.map(async (id) => [id, found.has(id) || (await canRead(id))] as const),
+  );
+  return checks.filter(([, ok]) => ok).map(([id]) => ({ id, ...KNOWN[id] }));
 }
 
 /**
