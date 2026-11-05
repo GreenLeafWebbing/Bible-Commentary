@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import NavLinks from "@/components/NavLinks";
 
 export const metadata: Metadata = {
   title: "Living Word Commentary",
@@ -14,11 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="site">
           <div className="container">
             <Link href="/" className="brand">Living <span>Word</span> Commentary</Link>
-            <nav className="site">
-              <Link href="/">Books</Link>
-              <Link href="/commentary">Commentary</Link>
-              <Link href="/admin">Write</Link>
-            </nav>
+            <NavLinks />
           </div>
         </header>
         <main className="container">{children}</main>
