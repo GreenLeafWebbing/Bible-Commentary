@@ -12,7 +12,7 @@ export default function Home() {
           Read the Scriptures and open commentary on a verse, passage, or chapter. Look for the{" "}
           <span className="plus" aria-hidden>+</span> beside the text.
         </p>
-        <p><Link className="btn" href="/commentary">Read all commentary →</Link></p>
+        <p style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Link className="btn" href="/commentary">Read all commentary →</Link><Link className="btn" href="/prayers">🙏 My prayer book</Link></p>
         <blockquote>“Your word is a lamp to my feet and a light to my path.” — Psalm 119:105</blockquote>
       </section>
       <h2>Old Testament</h2>

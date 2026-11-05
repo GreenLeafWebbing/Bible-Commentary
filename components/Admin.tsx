@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import type { Session } from "@supabase/supabase-js";
 import { browserClient, type Commentary } from "@/lib/supabase";
+import { useAuth } from "@/lib/useAuth";
+import AuthForm from "./AuthForm";
 import { BOOKS, BOOK_BY_ID, formatRef, parseRef } from "@/lib/books";
 import { Markdown } from "@/lib/markdown";
 
@@ -25,33 +26,23 @@ const empty = (book = "GEN", chapter = 1, vs?: number, ve?: number): Draft => ({
 });
 
 export default function Admin() {
-  const sb = browserClient();
   const params = useSearchParams();
-  const [session, setSession] = useState<Session | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    sb.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
-  }, [sb]);
-
-  useEffect(() => {
-    if (!session) { setIsAdmin(null); return; }
-    sb.rpc("is_admin").then(({ data }) => setIsAdmin(data === true));
-  }, [sb, session]);
+  const { sb, session, ready, isAdmin } = useAuth();
 
   if (!ready) return <p className="muted">Loading…</p>;
-  if (!session) return <Login />;
+  if (!session)
+    return <AuthForm title="Author sign in" intro="Commentary is written by the site author. Everyone can read it, no account needed." redirectPath="/admin" />;
   if (isAdmin === null) return <p className="muted">Checking access…</p>;
   if (!isAdmin)
     return (
       <div style={{ marginTop: 32 }}>
-        <h1>Signed in</h1>
-        <p className="muted">You’re signed in as {session.user.email}, but this account isn’t the site author, so it can’t write commentary.</p>
-        <p className="small muted">Account id: <code>{session.user.id}</code></p>
-        <button className="btn" onClick={() => sb.auth.signOut()}>Sign out</button>
+        <h1>Commentary is author-only</h1>
+        <p className="muted">Only the site author writes commentary, but your account has its own private prayer book.</p>
+        <p style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link className="btn primary" href="/prayers">Open my prayer book</Link>
+          <Link className="btn" href="/commentary">Read commentary</Link>
+          <button className="btn" onClick={() => sb.auth.signOut()}>Sign out</button>
+        </p>
       </div>
     );
 
@@ -61,44 +52,6 @@ export default function Admin() {
     vs: params.get("vs") ? Number(params.get("vs")) : undefined,
     ve: params.get("ve") ? Number(params.get("ve")) : undefined,
   }} />;
-}
-
-function Login() {
-  const sb = browserClient();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"in" | "up">("in");
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true); setMsg(null);
-    const { error } = mode === "in"
-      ? await sb.auth.signInWithPassword({ email, password })
-      : await sb.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/admin` } });
-    setBusy(false);
-    if (error) setMsg({ ok: false, text: error.message });
-    else if (mode === "up") setMsg({ ok: true, text: "Account created. Check your email to confirm, then sign in." });
-  }
-
-  return (
-    <div style={{ maxWidth: 380, margin: "48px auto" }}>
-      <h1>{mode === "in" ? "Author sign in" : "Create author account"}</h1>
-      <p className="muted small">Only the site author can write commentary. Visitors can read everything without an account.</p>
-      <form className="stack" onSubmit={submit}>
-        <label>Email<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" /></label>
-        <label>Password<input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "in" ? "current-password" : "new-password"} /></label>
-        <button className="btn primary" disabled={busy}>{busy ? "Please wait…" : mode === "in" ? "Sign in" : "Create account"}</button>
-        {msg && <p className={msg.ok ? "success" : "error"}>{msg.text}</p>}
-      </form>
-      <p className="small muted" style={{ marginTop: 16 }}>
-        {mode === "in"
-          ? <>First time? <button className="btn" style={{ padding: "2px 8px" }} onClick={() => setMode("up")}>Create account</button></>
-          : <>Have an account? <button className="btn" style={{ padding: "2px 8px" }} onClick={() => setMode("in")}>Sign in</button></>}
-      </p>
-    </div>
-  );
 }
 
 function Editor({ email, initialEdit, prefill }: { email: string; initialEdit: string | null; prefill: { book?: string; chapter?: number; vs?: number; ve?: number } }) {
