@@ -5,7 +5,7 @@ const DAY = 60 * 60 * 24;
 
 export type Verse = { n: number; text: string };
 export type ChapterResult =
-  | { ok: true; verses: Verse[]; version: { id: string; abbreviation: string; copyright?: string }; usedFallback: boolean }
+  | { ok: true; verses: Verse[]; version: { id: string; abbreviation: string; title?: string; copyright?: string }; fellBackFrom?: string }
   | { ok: false; error: string };
 
 function headers() {
@@ -120,38 +120,119 @@ export function parseVerses(html: string, bookId: string, chapter: number): Vers
   return verses;
 }
 
-type Attempt =
-  | { status: number }
-  | { status: 200; verses: Verse[]; version: { id: string; abbreviation: string; copyright?: string } };
+type VersionInfo = { id: string; abbreviation: string; title?: string; copyright?: string };
+type Attempt = { status: number } | { status: 200; verses: Verse[]; version: VersionInfo };
+
+/** Default order: first one your key is licensed for wins. */
+export const PREFERRED = ["114", "59", "111", "116"]; // NKJV, ESV, NIV, NLT
+const KNOWN: Record<string, { abbreviation: string; title: string }> = {
+  "114": { abbreviation: "NKJV", title: "New King James Version" },
+  "59": { abbreviation: "ESV", title: "English Standard Version" },
+  "111": { abbreviation: "NIV", title: "New International Version" },
+  "116": { abbreviation: "NLT", title: "New Living Translation" },
+  "1": { abbreviation: "KJV", title: "King James Version" },
+  "1713": { abbreviation: "CSB", title: "Christian Standard Bible" },
+  "2692": { abbreviation: "NASB", title: "New American Standard Bible 2020" },
+  "100": { abbreviation: "NASB1995", title: "New American Standard Bible 1995" },
+  "1588": { abbreviation: "AMP", title: "Amplified Bible" },
+  "3034": { abbreviation: "BSB", title: "Berean Standard Bible" },
+  "206": { abbreviation: "WEBUS", title: "World English Bible" },
+  "107": { abbreviation: "NET", title: "New English Translation" },
+};
+const fallbackId = () => process.env.YOUVERSION_FALLBACK_BIBLE_ID || "3034";
+
+async function versionInfo(id: string): Promise<VersionInfo> {
+  const info = await getJson(`${API}/bibles/${id}`).catch(() => ({ status: 0, body: null }));
+  return {
+    id,
+    abbreviation: pick(info.body, "abbreviation", "local_abbreviation") ?? KNOWN[id]?.abbreviation ?? `v${id}`,
+    title: pick(info.body, "title", "local_title", "name") ?? KNOWN[id]?.title,
+    copyright: pick(info.body, "copyright_short", "copyright", "copyright_long"),
+  };
+}
 
 async function tryVersion(versionId: string, bookId: string, chapter: number): Promise<Attempt> {
+  if (!/^\d+$/.test(versionId)) return { status: 400 };
   const passage = await getJson(`${API}/bibles/${versionId}/passages/${bookId}.${chapter}?format=html`);
   if (passage.status !== 200) return { status: passage.status };
   const content = pick(passage.body, "content", "html", "text");
   if (!content) return { status: 502 };
-  const info = await getJson(`${API}/bibles/${versionId}`).catch(() => ({ status: 0, body: null }));
-  return {
-    status: 200,
-    verses: parseVerses(content, bookId, chapter),
-    version: {
-      id: versionId,
-      abbreviation: pick(info.body, "abbreviation", "local_abbreviation") ?? (versionId === "114" ? "NKJV" : `v${versionId}`),
-      copyright: pick(info.body, "copyright_short", "copyright", "copyright_long"),
-    },
-  };
+  return { status: 200, verses: parseVerses(content, bookId, chapter), version: await versionInfo(versionId) };
 }
 
-export async function getChapter(bookId: string, chapter: number): Promise<ChapterResult> {
+/** Can this key read this version? Probes a tiny passage (cached for a day). */
+async function canRead(id: string) {
   try {
-    const primary = process.env.YOUVERSION_BIBLE_ID || "114";
-    const fallback = process.env.YOUVERSION_FALLBACK_BIBLE_ID;
-    const first = await tryVersion(primary, bookId, chapter);
-    if ("verses" in first) return { ok: true, verses: first.verses, version: first.version, usedFallback: false };
-    if (fallback && fallback !== primary && [401, 403, 404].includes(first.status)) {
-      const second = await tryVersion(fallback, bookId, chapter);
-      if ("verses" in second) return { ok: true, verses: second.verses, version: second.version, usedFallback: true };
+    const r = await getJson(`${API}/bibles/${id}/passages/JHN.3.16?format=text`);
+    return r.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+/** The first preferred version (NKJV, ESV, NIV, NLT) the key can read, else the fallback. */
+export async function defaultVersionId(): Promise<string> {
+  for (const id of PREFERRED) if (await canRead(id)) return id;
+  return fallbackId();
+}
+
+function asList(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  const b = body as Record<string, unknown> | null;
+  for (const k of ["data", "bibles", "versions", "items", "results"]) if (Array.isArray(b?.[k])) return b![k] as unknown[];
+  return [];
+}
+
+/** English versions the key can read, preferred ones first. */
+export async function availableVersions(): Promise<VersionInfo[]> {
+  const found = new Map<string, VersionInfo>();
+  try {
+    let token: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const q = new URLSearchParams({ "language_ranges[]": "en" });
+      if (token) q.set("page_token", token);
+      const r = await getJson(`${API}/bibles?${q}`);
+      if (r.status !== 200) break;
+      for (const item of asList(r.body)) {
+        const o = item as Record<string, unknown>;
+        const id = o.id != null ? String(o.id) : "";
+        if (!/^\d+$/.test(id)) continue;
+        const abbreviation = [o.abbreviation, o.local_abbreviation].find((v) => typeof v === "string") as string | undefined;
+        const title = [o.title, o.local_title, o.name].find((v) => typeof v === "string") as string | undefined;
+        found.set(id, { id, abbreviation: abbreviation ?? KNOWN[id]?.abbreviation ?? `v${id}`, title: title ?? KNOWN[id]?.title });
+      }
+      token = pick(r.body, "next_page_token");
+      if (!token) break;
     }
-    return { ok: false, error: `Bible text unavailable (YouVersion status ${first.status}).` };
+  } catch {
+    /* fall through to probing known versions */
+  }
+  // Make sure the well-known versions are included only if the key can actually read them.
+  const checks = await Promise.all(Object.keys(KNOWN).map(async (id) => [id, await canRead(id)] as const));
+  for (const [id, ok] of checks) {
+    if (ok && !found.has(id)) found.set(id, { id, ...KNOWN[id] });
+    if (!ok && PREFERRED.includes(id)) found.delete(id);
+  }
+  const rank = (id: string) => (PREFERRED.includes(id) ? PREFERRED.indexOf(id) : KNOWN[id] ? 10 : 100);
+  return [...found.values()].sort((a, b) => rank(a.id) - rank(b.id) || a.abbreviation.localeCompare(b.abbreviation));
+}
+
+/**
+ * Load a chapter in the requested version (if any), else the default.
+ * `fellBackFrom` is set when the reader picked a version that isn't available.
+ */
+export async function getChapter(bookId: string, chapter: number, requested?: string): Promise<ChapterResult> {
+  try {
+    const def = await defaultVersionId();
+    const order = [...new Set([requested, def, fallbackId()].filter(Boolean) as string[])];
+    let firstStatus = 0;
+    for (const id of order) {
+      const r = await tryVersion(id, bookId, chapter);
+      if ("verses" in r)
+        return { ok: true, verses: r.verses, version: r.version, fellBackFrom: requested && requested !== id ? KNOWN[requested]?.abbreviation ?? requested : undefined };
+      firstStatus ||= r.status;
+    }
+    return { ok: false, error: `Bible text unavailable (YouVersion status ${firstStatus}).` };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Bible text unavailable." };
   }

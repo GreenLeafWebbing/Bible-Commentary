@@ -20,8 +20,8 @@ type Draft = {
   crossRefs: string;
 };
 
-const empty = (book = "GEN", chapter = 1, vs?: number): Draft => ({
-  book, chapter, scope: vs ? "verses" : "chapter", verseStart: vs ?? 1, verseEnd: vs ?? 1, title: "", body: "", crossRefs: "",
+const empty = (book = "GEN", chapter = 1, vs?: number, ve?: number): Draft => ({
+  book, chapter, scope: vs ? "verses" : "chapter", verseStart: vs ?? 1, verseEnd: Math.max(ve ?? vs ?? 1, vs ?? 1), title: "", body: "", crossRefs: "",
 });
 
 export default function Admin() {
@@ -59,6 +59,7 @@ export default function Admin() {
     book: params.get("book") ?? undefined,
     chapter: params.get("chapter") ? Number(params.get("chapter")) : undefined,
     vs: params.get("vs") ? Number(params.get("vs")) : undefined,
+    ve: params.get("ve") ? Number(params.get("ve")) : undefined,
   }} />;
 }
 
@@ -100,10 +101,10 @@ function Login() {
   );
 }
 
-function Editor({ email, initialEdit, prefill }: { email: string; initialEdit: string | null; prefill: { book?: string; chapter?: number; vs?: number } }) {
+function Editor({ email, initialEdit, prefill }: { email: string; initialEdit: string | null; prefill: { book?: string; chapter?: number; vs?: number; ve?: number } }) {
   const sb = browserClient();
   const startBook = prefill.book && BOOK_BY_ID.has(prefill.book) ? prefill.book : "GEN";
-  const [draft, setDraft] = useState<Draft>(empty(startBook, prefill.chapter ?? 1, prefill.vs));
+  const [draft, setDraft] = useState<Draft>(empty(startBook, prefill.chapter ?? 1, prefill.vs, prefill.ve));
   const [list, setList] = useState<Commentary[]>([]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
