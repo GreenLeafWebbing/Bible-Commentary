@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { BOOK_BY_ID, BOOKS } from "@/lib/books";
-import { getChapter } from "@/lib/youversion";
+import { cookies } from "next/headers";
+import { availableVersions, getChapter } from "@/lib/youversion";
 import { serverClient, type Commentary } from "@/lib/supabase";
 import Reader from "@/components/Reader";
 
@@ -26,14 +27,17 @@ function neighbor(bookId: string, chapter: number, dir: 1 | -1) {
   return { book: next, chapter: dir === 1 ? 1 : next.chapters };
 }
 
-export default async function ChapterPage({ params }: { params: Params }) {
+export default async function ChapterPage({ params, searchParams }: { params: Params; searchParams: Promise<{ v?: string }> }) {
   const { book: bookParam, chapter: chapterParam } = await params;
+  const { v } = await searchParams;
+  const requested = v ?? (await cookies()).get("bv")?.value;
   const book = BOOK_BY_ID.get(bookParam.toUpperCase());
   const chapter = Number(chapterParam);
   if (!book || !Number.isInteger(chapter) || chapter < 1 || chapter > book.chapters) notFound();
 
-  const [bible, notes] = await Promise.all([
-    getChapter(book.id, chapter),
+  const [bible, versions, notes] = await Promise.all([
+    getChapter(book.id, chapter, requested),
+    availableVersions(),
     serverClient()
       .from("commentaries")
       .select("*")
@@ -54,6 +58,7 @@ export default async function ChapterPage({ params }: { params: Params }) {
         bookName={book.name}
         chapter={chapter}
         bible={bible}
+        versions={versions}
         notes={(notes.data ?? []) as Commentary[]}
       />
       <div className="chapter-nav">
